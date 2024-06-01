@@ -1,6 +1,6 @@
 import os, redis, csv, json, datetime
 import numpy as np
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from mobile_insight.analyzer.analyzer import *
@@ -87,6 +87,7 @@ def query_item_detail(log_name):
 app = Flask(__name__)
 CORS(app)
 app.config['UPLOAD_FOLDER'] = './uploads'
+app.config['DOWNLOAD_FOLDER'] = './downloads'
 
 @app.route('/', methods=['GET'])
 def home():
@@ -155,6 +156,23 @@ def get_item_detail_by_log_name():
     log_name = request.args.get('log_name')
     log = query_item_detail(log_name)
     return jsonify(log)
+
+@app.route('/download_filtered_logfile', methods=['POST'])
+def get_filtered_logfile():
+    data = request.json
+    filename, type_ids = data.get('filename', ''), data.get('type_ids', [])
+    if not isinstance(type_ids, list):
+        return jsonify({"error": "Invalid type id format"}), 400
+    original_file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    processed_file_path = os.path.join(app.config['DOWNLOAD_FOLDER'], f'processed_{filename}')
+    src = OfflineReplayer()
+    src.set_input_path(original_file_path)
+    for type_id in type_ids:
+        src.enable_log(type_id)
+    src.save_log_as(processed_file_path)
+    src.run()
+    return send_file(processed_file_path, as_attachment=True)
+    
 
 if __name__ == '__main__':
     app.run(port=8080, host="0.0.0.0", debug=True)
