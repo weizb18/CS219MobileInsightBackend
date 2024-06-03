@@ -30,8 +30,14 @@ def my_analysis(input_path):
     src.run()
     return analyzer
 
-def get_filenames():
-    return redis_client.lrange("filenames", 0, -1)
+def get_filenames(page, limit):
+    start = (page - 1) * limit
+    end = start + limit
+    files = redis_client.lrange("filenames", 0, -1)
+    total_files = len(files)
+    paginated_files = files[start:end]
+    return paginated_files, total_files
+    # return redis_client.lrange("filenames", 0, -1)
 
 def add_filename_to_list(filename):
     redis_client.rpush("filenames", filename)
@@ -46,10 +52,14 @@ def add_log_item(filename, log_item, item_number):
     json_str = json.dumps(log_item, indent=4)    # serialize the log item
     redis_client.set(log_name, json_str)    # store in string
 
-def query_by_filename(filename):
-    log_names = redis_client.zrange(filename, 0, -1)
-    return log_names
-    # return [redis_client.hgetall(log_name) for log_name in log_names]
+def query_by_filename(filename, page, limit):
+    start = (page - 1) * limit
+    end = start + limit - 1
+    total_logs = redis_client.zcard(filename)
+    logs = redis_client.zrange(filename, start, end)
+    return logs, total_logs
+    # log_names = redis_client.zrange(filename, 0, -1)
+    # return log_names
 
 def query_file_info(filename):
     log_names = redis_client.zrange(filename, 0, -1)
@@ -91,8 +101,17 @@ app.config['DOWNLOAD_FOLDER'] = './downloads'
 
 @app.route('/', methods=['GET'])
 def home():
-    filenames = get_filenames()
-    return jsonify(filenames)
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+    paginated_files, total_files = get_filenames(page, limit)
+    return jsonify({
+        'data': paginated_files,
+        'total': total_files,
+        'page': page,
+        'pages': (total_files + limit - 1) // limit
+    })
+    # filenames = get_filenames()
+    # return jsonify(filenames)
 
 @app.route('/upload_file', methods=['POST'])
 def upload_file_by_user():
@@ -116,8 +135,17 @@ def upload_file_by_user():
 @app.route('/get_items', methods=['GET'])
 def get_items_by_filename():
     filename = request.args.get('filename')
-    logs = query_by_filename(filename)
-    return jsonify(logs)
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+    logs, total_logs = query_by_filename(filename, page, limit)
+    return jsonify({
+        'data': logs,
+        'total': total_logs,
+        'page': page,
+        'pages': (total_logs + limit - 1) // limit
+    })
+    # logs = query_by_filename(filename)
+    # return jsonify(logs)
 
 @app.route('/get_file_info', methods=['GET'])
 def get_file_info_by_filename():
