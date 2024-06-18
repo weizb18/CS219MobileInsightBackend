@@ -1,12 +1,11 @@
-#!/usr/bin/python
-
-import os, redis, csv, json
+import os, redis, csv, json, datetime
 import numpy as np
+import shutil
 
 from mobile_insight.analyzer.analyzer import *
 from mobile_insight.monitor import OfflineReplayer
 
-r = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
+redis_client = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
 
 class myAnalyzer(Analyzer):
     def __init__(self):
@@ -30,44 +29,43 @@ def my_analysis(input_path):
     src.run()
     return analyzer
 
+def check_eligibility(filename):
+    files = redis_client.lrange("filenames", 0, -1)
+    if filename in files:
+        return False
+    else:
+        return True
+
 def add_filename_to_list(filename):
-    r.rpush("filenames", filename)
+    redis_client.rpush("filenames", filename)
 
 def add_log_item(filename, log_item, item_number):
     timestamp = log_item['timestamp'].strftime('%Y-%m-%d-%H-%M-%S-%f')
     type_id = log_item['type_id']
     item_number = str(item_number)
     log_name = f"{filename}:{item_number}:{timestamp}:{type_id}"
-    r.zadd(filename, {log_name: log_item['timestamp'].timestamp()})    # store in sorted set
+    redis_client.zadd(filename, {log_name: log_item['timestamp'].timestamp()})    # store in sorted set
     log_item['timestamp'] = timestamp
     json_str = json.dumps(log_item, indent=4)    # serialize the log item
-    r.set(log_name, json_str)    # store in string
-    # r.hset(log_name, mapping=log_item)    # store in hash
+    redis_client.set(log_name, json_str)    # store in string
+    print(log_name)
 
-filename = '20201115_181637_Xiaomi-Mi10_46000.mi2log'
-input_path = '../examples/logs/offline_log_examples/20201115_181637_Xiaomi-Mi10_46000.mi2log'
 
-# filename = 'data_sample.mi2log'
-# input_path = '../examples/logs/data_sample.mi2log'
-add_filename_to_list(filename)
-stats = my_analysis(input_path)
-item_number = 1
-for item in stats.log_item_list:
-    add_log_item(filename, item, item_number)
-    item_number += 1
-'''
-cnt = 0
-filenames = os.listdir('../examples/logs/offline_log_examples/')
-for filename in filenames:
-    print(filename)
+file_path = "../examples/logs/offline_log_examples/20201116_162549_Xiaomi-Mi10_46000.mi2log"
+
+
+dest_dir = "./uploads/"
+shutil.copy(file_path, dest_dir)
+
+filename = file_path.split("/")[-1]
+print(filename)
+if check_eligibility(filename) is True:
     add_filename_to_list(filename)
-    input_path = '../examples/logs/offline_log_examples/' + filename
-    stats = my_analysis(input_path)
+    stats = my_analysis(file_path)
     item_number = 1
     for item in stats.log_item_list:
         add_log_item(filename, item, item_number)
         item_number += 1
-    cnt += 1
-    if cnt == 5: break
-'''
+else:
+    print("This file already exists.")
 

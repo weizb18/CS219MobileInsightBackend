@@ -34,6 +34,7 @@ def get_filenames(page, limit):
     start = (page - 1) * limit
     end = start + limit
     files = redis_client.lrange("filenames", 0, -1)
+    files.reverse()
     total_files = len(files)
     paginated_files = files[start:end]
     return paginated_files, total_files
@@ -71,23 +72,15 @@ def query_file_info(filename):
     type_ids = list(type_ids)
     return {"start": start_time_str, "end": end_time_str, "type_ids": type_ids}
 
-def query_by_timestamp(filename, start_time, end_time):
+def query_by_timestamp_type_ids(filename, start_time, end_time, type_ids, page, limit):
     start_timestamp = start_time.timestamp()
     end_timestamp = end_time.timestamp()
     log_names = redis_client.zrangebyscore(filename, start_timestamp, end_timestamp)
-    return log_names
-
-# def query_by_type_id(filename, type_id):
-#     log_names = redis_client.zrange(filename, 0, -1)
-#     return [log_name for log_name in log_names if log_name.endswith(f":{type_id}")]
-
-def query_by_type_ids(filename, type_ids):
-    log_names = redis_client.zrange(filename, 0, -1)
     filtered_log_names = []
     for log_name in log_names:
         if any(log_name.endswith(type_id) for type_id in type_ids):
             filtered_log_names.append(log_name)
-    return filtered_log_names
+    return filtered_log_names[(page-1)*limit : page*limit], len(filtered_log_names)
 
 def query_item_detail(log_name):
     json_str = redis_client.get(log_name)
@@ -132,52 +125,37 @@ def upload_file_by_user():
             item_number += 1
         return jsonify({'message': 'File successfully uploaded and processed'}), 200
 
-@app.route('/get_items', methods=['GET'])
-def get_items_by_filename():
-    filename = request.args.get('filename')
-    page = request.args.get('page', 1, type=int)
-    limit = request.args.get('limit', 20, type=int)
-    logs, total_logs = query_by_filename(filename, page, limit)
-    return jsonify({
-        'data': logs,
-        'total': total_logs,
-        'page': page,
-        'pages': (total_logs + limit - 1) // limit
-    })
-    # logs = query_by_filename(filename)
-    # return jsonify(logs)
-
 @app.route('/get_file_info', methods=['GET'])
 def get_file_info_by_filename():
     filename = request.args.get('filename')
     file_info = query_file_info(filename)
     return jsonify(file_info)
 
-@app.route('/search_timeframe', methods=['GET'])
-def get_logs_by_timestamp():
-    filename = request.args.get('filename')
-    start_time = request.args.get('start_time')
-    end_time = request.args.get('end_time')
-    start_time = datetime.datetime.strptime(start_time, '%Y-%m-%d-%H-%M-%S-%f')
-    end_time = datetime.datetime.strptime(end_time, '%Y-%m-%d-%H-%M-%S-%f')
-    logs = query_by_timestamp(filename, start_time, end_time)
-    return jsonify(logs)
-
-# @app.route('/search_type_id', methods=['GET'])
-# def get_logs_by_type_id():
-#     filename = request.args.get('filename')
-#     type_id = request.args.get('type_id')
-#     logs = query_by_type_id(filename, type_id)
-#     return jsonify(logs)
-
-@app.route('/search_type_ids', methods=['POST'])
-def get_logs_by_type_ids():
+@app.route('/search', methods=['POST'])
+def get_logs_by_timestamp_type_ids():
     data = request.json
-    filename, type_ids = data.get('filename', ''), data.get('type_ids', [])
+    page = int(data.get('page', 1))
+    limit = int(data.get('limit', 20))
+    filename = data.get('filename', '')
+    start_time, end_time = data.get('start_time', ''), data.get('end_time', '')
+    type_ids = data.get('type_ids', [])
     if not isinstance(type_ids, list):
         return jsonify({"error": "Invalid type id format"}), 400
-    logs = query_by_type_ids(filename, type_ids)
-    return jsonify(logs)
+    
+    file_info = query_file_info(filename)
+    if start_time == '': start_time = file_info['start']
+    if end_time == '': end_time = file_info['end']
+    if len(type_ids) == 0: type_ids = file_info['type_ids']
+    start_time = datetime.datetime.strptime(start_time, '%Y-%m-%d-%H-%M-%S-%f')
+    end_time = datetime.datetime.strptime(end_time, '%Y-%m-%d-%H-%M-%S-%f')
+    
+    logs, total_logs = query_by_timestamp_type_ids(filename, start_time, end_time, type_ids, page, limit)
+    return jsonify({
+        'data': logs,
+        'total': total_logs,
+        'page': page,
+        'pages': (total_logs + limit - 1) // limit
+    })
 
 @app.route('/get_item_detail', methods=['GET'])
 def get_item_detail_by_log_name():
